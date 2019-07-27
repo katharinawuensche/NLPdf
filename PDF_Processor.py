@@ -12,7 +12,10 @@ import statistics
 import math
 
 class PDF_Processor:
-    #nlp = spacy.load("en")
+    """
+        Main processing class containing the methods for extracting and cleaning a PDF file.
+    """
+
     def __init__(self, filename=None):
         self.filename = filename
         nltkWords.ensure_loaded()
@@ -25,6 +28,8 @@ class PDF_Processor:
         for word in self.correctWords:
             if len(word) <= 1:
                 self.correctWords.remove(word)
+
+        #manually adding words to the word list:
         for word in ["et", "al.", "acknowledgment", "acknowledgement", "3d", "pre", "post", "e.g.", "co2"]:
             self.correctWords.append(word)
         if self.filename:
@@ -36,6 +41,11 @@ class PDF_Processor:
         return self.correctWords
 
     def _addCorrectWords(self, text, correctWords):
+        """
+            Helper function that is used for temporarily adding words to the word list.
+            Makes sure that lemmatization only has to be done once and not in
+            every execution of the isWord() function.
+        """
         smallText = " ".join(set(re.split("\W", text))).lower()
         doc = list(self.nlp.pipe([smallText]))[0]
         incompleteWords = []
@@ -44,19 +54,24 @@ class PDF_Processor:
                 correctWords.append(token.text.lower())
             else:
                 incompleteWords.append(token.text.lower())
+        #The following lines also add named-entities to the word list
+        # -> decreases the number of incorrectly deleted words but
+        # also increases the amount of noise that is not removed correctly
         # for token in doc.ents:
         #     if token.label_ in ["PERSON", "NORP", "FAC", "ORG"]:
         #         self.correctWords.append(token.text.lower())
         correctWords = list(set(correctWords))
         return correctWords#, incompleteWords
 
-    def _groupParagraphs(self, doc):
-        paragraphs = doc.split("\n\n")
-        return paragraphs
+    # def _groupParagraphs(self, doc):
+    #     paragraphs = doc.split("\n\n")
+    #     return paragraphs
 
     def _parenthetic_contents(self, string):
-        """Generate parenthesized contents in string as pairs (level, contents).
-         From: https://gist.github.com/constructor-igor/5f881c32403e3f313e6f"""
+        """
+            Generate parenthesized contents in string as pairs (level, contents).
+            From: https://gist.github.com/constructor-igor/5f881c32403e3f313e6f
+        """
         stack = []
         for i, c in enumerate(string):
             if c == '(':
@@ -78,77 +93,89 @@ class PDF_Processor:
         return newText
 
     def _FigureTablePrep(self, doc):
-        #newDoc = []
+        """
+            First step of figure and table detection, should add a newline character
+            before possible figure/table captions.
+        """
         newPage = ""
         for line in doc.splitlines():
             newLine = line
-            if re.search(r"\. *(Figure|Fig.|Table) *[0-9]+(\.|\:)", line):
-                re_result = re.search(r"(Figure|Fig.|Table) *[0-9]+(\.|\:)", line)
+            if re.search(r"\. *(Figure|Fig.|Table|Tbl.) *[0-9]+(\.|\:)", line):
+                re_result = re.search(r"(Figure|Fig.|Table|Tbl.) *[0-9]+(\.|\:)", line)
                 newLine = line[:re_result.start()] + "\n" + line[re_result.start():]
             newPage += newLine + "\n"
-        #newDoc.append(newPage)
         return newPage
 
     def _isWord(self, word, correctWords=None):
-        initCorrWords = copy.copy(correctWords)
+        """
+            Checks whether a word occurs in the word list.
+        """
         if not correctWords:
             correctWords = self.correctWords
         return word.lower().lstrip().rstrip() in correctWords
 
     def _containsSpecialCharacter(self, word):
+        """
+            Checks wheter a word contains special characters such as symbols.
+        """
         greekpatt = r"[^a-zA-z0-9\:\-+!\" \.,;'\(\)]"
         return re.match(greekpatt, word)
 
     def _isNoise(self, line, correctWords=None):
+        """
+            Checks whether a line is noise, i.e. whether it does not contain
+            correct words but special symbols, mathematical functions or other characters
+        """
         initCorrWords = copy.copy(correctWords)
         if not correctWords:
             correctWords = self.correctWords
-        #doc = self.nlp(line)
         formulaWords = ["cid", "sin", "cos", "tan", "max", "min", "exp", "avg"]
         for word in re.split("\W", line):
             if word in formulaWords:
                 continue
             if not self._containsSpecialCharacter(word) and self._isWord(word, correctWords=initCorrWords):
-                #print("Lemma:", word.lemma_)
                 return False
-            #print("Kein Lemma:", word.lemma_)
         return True
 
-    def _isWholeSentence(self, originalsentence, out=False):
-        sentence = originalsentence.lstrip().rstrip()
-        #sentence = self._removeInlineFormula(sentence)
-        for char in "='`´’∗+":
-            sentence = sentence.replace(char, "")
-        for phrase in ["et al. ", "e.g. ", "Eq. ", "Fig. "]:
-            sentence = sentence.replace(phrase, "")
-        sentence = self._removeTextInParentheses(sentence)
-        for match in re.findall("  +", sentence):
-             sentence = sentence.replace(match, " ")
-        sentence = sentence.lstrip().rstrip()
-        doc = self.nlp(sentence)
-        for sent in doc.sents:
-            senttext = sent.text.lstrip().rstrip()
-            if senttext.endswith("et al.") or senttext.endswith("e.g."):
-                continue
-            if not ((sent[0].text[0].isupper()) and (sent[-1].tag_ in ".:" or senttext[-1] in ".:?!") ):
-                if out:
-                    print("No sentence format:", sent, sent[-1].tag_, sent[0].text)
-                return False, senttext
-            containsSubject = len(list(filter(lambda token: token.dep_.count("subj") > 0 and token.pos_ != "VERB", sent))) > 0
-            containsVerb = len(list(filter(lambda token: token.pos_ == "VERB", sent))) > 0
-            #print(containsVerb, containsSubject)
-            if not (containsSubject and containsVerb):
-                if out:
-                    print("No sentence word types:", sent)
-                return False, senttext
-        return True, ""
-
-    def _isWholeParagraph(self, text, out=False):
-        newText = self.removeLineBreaks(text)
-        #check if every sentence is a whole sentence
-        return self._isWholeSentence(newText, out)
+    # def _isWholeSentence(self, originalsentence, out=False):
+    #     sentence = originalsentence.lstrip().rstrip()
+    #     #sentence = self._removeInlineFormula(sentence)
+    #     for char in "='`´’∗+":
+    #         sentence = sentence.replace(char, "")
+    #     for phrase in ["et al. ", "e.g. ", "Eq. ", "Fig. "]:
+    #         sentence = sentence.replace(phrase, "")
+    #     sentence = self._removeTextInParentheses(sentence)
+    #     for match in re.findall("  +", sentence):
+    #          sentence = sentence.replace(match, " ")
+    #     sentence = sentence.lstrip().rstrip()
+    #     doc = self.nlp(sentence)
+    #     for sent in doc.sents:
+    #         senttext = sent.text.lstrip().rstrip()
+    #         if senttext.endswith("et al.") or senttext.endswith("e.g."):
+    #             continue
+    #         if not ((sent[0].text[0].isupper()) and (sent[-1].tag_ in ".:" or senttext[-1] in ".:?!") ):
+    #             if out:
+    #                 print("No sentence format:", sent, sent[-1].tag_, sent[0].text)
+    #             return False, senttext
+    #         containsSubject = len(list(filter(lambda token: token.dep_.count("subj") > 0 and token.pos_ != "VERB", sent))) > 0
+    #         containsVerb = len(list(filter(lambda token: token.pos_ == "VERB", sent))) > 0
+    #         #print(containsVerb, containsSubject)
+    #         if not (containsSubject and containsVerb):
+    #             if out:
+    #                 print("No sentence word types:", sent)
+    #             return False, senttext
+    #     return True, ""
+    #
+    # def _isWholeParagraph(self, text, out=False):
+    #     newText = self.removeLineBreaks(text)
+    #     #check if every sentence is a whole sentence
+    #     return self._isWholeSentence(newText, out)
 
     def _alluppercaseHeadline(self, line):
+        """
+            Headline format 3: returns 3 if all characters are uppercase,
+            e.g. CONCLUCION AND FUTURE WORK, and 0 otherwise
+        """
         wordsInLine = [word for word in re.split('[^(a-zA-z)]+', line) if len(word) > 0]
         if len(wordsInLine) == 0:
             return 0
@@ -157,6 +184,10 @@ class PDF_Processor:
                 return 0
         return 3
     def _alltitleHeadline(self, line):
+        """
+            Headline format 2: returns 2 if all words are in title case,
+            e.g. Conclusion And Future Work, and 0 otherwise
+        """
         wordsInLine = [word for word in re.split('[^(a-zA-z)]+', line) if len(word) > 0]
         if len(wordsInLine) == 0:
             return 0
@@ -165,11 +196,14 @@ class PDF_Processor:
                 return 0
         return 2
     def _sometitleHeadline(self, line):
+        """
+            Headline format 1: returns 1 if verbs, nouns and adjectives are in
+            title case, e.g. Conclusion and Future Work, and 0 otherwise
+        """
         wordsInLine = [word for word in re.split('[^(a-zA-z)]+', line) if len(word) > 0]
         if len(wordsInLine) == 0:
             return 0
-        if wordsInLine[0].istitle(): #and line.split(" ")[-1].istitle():
-            #nlpLine = self.nlp(line)
+        if wordsInLine[0].istitle():
             nlpLine = list(self.nlp.pipe([line]))[0]
             for token in nlpLine:
                 if token.pos_ in ["VERB", "NOUN", "ADJ"] and not token.text[0].istitle():
@@ -178,19 +212,22 @@ class PDF_Processor:
         else:
             return 0
 
-    def _mergeParagraphs(self, parA, parB):
-        newParagraph = parA.lstrip().rstrip()
-        if newParagraph.endswith("-"):
-            newParagraph = newParagraph.rstrip("-")
-        else:
-            newParagraph += " "
-        newParagraph += parB.lstrip().rstrip()
-        return newParagraph
+    # def _mergeParagraphs(self, parA, parB):
+    #     newParagraph = parA.lstrip().rstrip()
+    #     if newParagraph.endswith("-"):
+    #         newParagraph = newParagraph.rstrip("-")
+    #     else:
+    #         newParagraph += " "
+    #     newParagraph += parB.lstrip().rstrip()
+    #     return newParagraph
 
     def _cleanup(self, text):
+        """
+            Cleanup function used to merge multiple lines into on paragraph and
+            to remove additional white spaces.
+        """
         newText = ""
         for line in text.splitlines():
-            #newline = line
             newline = line.rstrip().lstrip()
             replacement = " "
             if newline.endswith("-"):
@@ -210,10 +247,15 @@ class PDF_Processor:
         return newText
 
     def _repairNumberedHeadlines(self, text):
+        """
+            Repair numbered headlines that are split into multiple lines, e.g.:
+            '1
+            Introduction'
+            instead of '1 Introduction'
+        """
         newText = text
         textlen = len(newText.splitlines())
         for idx in range(textlen):
-            #print(idx, textlen)
             if idx >= textlen:
                 break
             line = newText.splitlines()[idx]
@@ -234,6 +276,9 @@ class PDF_Processor:
         return newText
 
     def _replaceSpecialCharacters(self, text):
+        """
+            Repair common formatting errors.
+        """
         newText = text.replace("ﬁ", "fi")
         newText = newText.replace("ďŹ", "fi")
         newText = newText.replace("ﬂ", "fl")
@@ -250,39 +295,25 @@ class PDF_Processor:
         return newText
 
     def _clean(self):
-        #self.findHeadlines(self.text)
-        #print("-------------")
+        """
+            Starts and coordinates the cleaning process.
+        """
         self.symbols = []
         self.text = self._replaceSpecialCharacters(self.text)
-        #print("Special Characters", len(self.text))
         self.text = self.findReferences(self.text)
-        #print("Remove References", len(self.text))
         self.text = self._repairNumberedHeadlines(self.text)
-        #print("Repair numbered Headlines", len(self.text))
-        #self.text = self.removeDuplicateLines(self.text)
-
         self.text = self.findHeadersAndFooters(self.text)
-        #print("Headers & Footers", len(self.text))
         self.text = self.findFigures(self.text)
-        #print("Figures", len(self.text))
         self.text = self.findTables(self.text)
-        #print("Tables", len(self.text))
         self.text = self.removeInlineReferences(self.text)
-        #print("Inline References", len(self.text))
         self.text, self.symbols = self.findFormulas(self.text)
-        #print("Formulas", len(self.text))
         self.text, self.inlineFormulas = self.findInlineFormula(self.text)
-        #print(len(self.text))
         self.symbols += self.inlineFormulas
-        #print(self.symbols)
         self.text = self.findNoise(self.text)
         self.nlp = spacy.load("en")
         self.text = self.removeAuthors(self.text)
         self.text = self.removeSymbols(self.text, self.symbols)
-
         self.text = self.removeDuplicateLines(self.text)
-        #self.text = self.removeLineBreaks(self.text)
-        #self.text = self.matchParagraphs(self.text, out=False)
         self.headlines = self.findHeadlines(self.text, out=False)
         self.chapters = self.groupChapters(self.text, self.headlines)
         self.text = self.joinChapters(self.chapters)
@@ -291,6 +322,10 @@ class PDF_Processor:
         self.text = self.text.rstrip().lstrip()
 
     def extract(self, filename, method="pdfbox"):
+        """
+            Extract the raw text of a PDF file using PDFBox or Textract.
+            Default method: PDFBox
+        """
         if method == "pdfbox":
             p = pdfbox.PDFBox()
             text = p.extract_text(filename)
@@ -304,6 +339,9 @@ class PDF_Processor:
         return text
 
     def getMetadata(self, filename):
+        """
+            Extract a file's metadata (authors and title) using pdf2text.
+        """
         with open(filename, 'rb') as file:
             pdf = PdfFileReader(file)
             authors = [name.lstrip().rstrip() for name in self._removeTextInParentheses(pdf.getDocumentInfo().author).split(", ") if len(name) > 0]
@@ -311,6 +349,11 @@ class PDF_Processor:
         return (authors, title)
 
     def strip(self, text, headlines, fromval=None, toval=None):
+        """
+            Strip the text according to the headlines specified in fromval and toval
+            fromval headlines are all included in the output
+            toval headlines and the subsequent text are excluded from the output
+        """
         startHL = None
         stopHL = None
         if fromval:
@@ -318,10 +361,6 @@ class PDF_Processor:
             if len(startHLs) > 0:
                 mindx = min([text.index(hl[0]) for hl in startHLs])
                 startHL = [hl[0] for hl in startHLs if text.index(hl[0]) == mindx][0]
-
-                #print("StartHLs:", startHLs)
-                # print("maxIds:", maxIdx)
-                # print("startHL:", startHL)
         else:
             if len(headlines) > 0:
                 startHL = headlines[0][0]
@@ -330,22 +369,17 @@ class PDF_Processor:
             if len(stopHLs) > 0:
                 minIdx = min([text.index(hl[0]) for hl in stopHLs])
                 stopHL = [hl[0] for hl in stopHLs if text.index(hl[0]) == minIdx][0]
-        # else:
-        #     if len(headlines) > 0:
-        #         stopHL = headlines[-1][0]
-
         newText = text
-
         if startHL:
-            #print("StartHL:", startHL)
             newText = newText[newText.index(startHL):]
         if stopHL:
-            #print("StopHL", stopHL)
             newText = newText[:newText.rindex(stopHL)]
-
         return newText
 
     def findReferences(self, doc, remove=True):
+        """
+            Find the References section and only return the preceding part of the text.
+        """
         newDoc = doc
         if "References" in newDoc:
             newDoc = newDoc[:newDoc.rindex("References")]
@@ -353,8 +387,10 @@ class PDF_Processor:
             newDoc = newDoc[:newDoc.rindex("REFERENCES")]
         return newDoc
 
-    #Find headlines
     def findHeadlines(self, doc, remove=False, out=False):
+        """
+            Detect headlines based on the three headline patterns.
+        """
         numberedHeadlinePattern = r"^([0-9\.\)]+|[IVX\.\)]+) +[A-Z]"
         potentialHeadlines = []
         ReferenceHeadlines = []
@@ -374,7 +410,6 @@ class PDF_Processor:
                 for word in ["References", "Acknowledgment", "Acknowledgement"]:
                     if word.lower() in line.lower():
                         lastHeadlines.append([line, headlineconfig])
-
         if out:
             print(potentialHeadlines)
             print(ReferenceHeadlines)
@@ -388,7 +423,6 @@ class PDF_Processor:
                     if int(match2.groups()[0]) == 1:
                         realHeadlines.append(entry)
                     continue
-
                 match1 = re.match("^([0-9]+).", realHeadlines[-1][0])
                 if match1 and match2:
                     if match1.groups()[0] == match2.groups()[0] or int(match1.groups()[0]) == int(match2.groups()[0]) - 1:
@@ -402,8 +436,10 @@ class PDF_Processor:
             print(realHeadlines)
         return realHeadlines
 
-    #Find figures
     def findFigures(self, doc, remove=True):
+        """
+            Find and remove figures based on regular expressions.
+        """
         doc = self._FigureTablePrep(doc)
         newPage = doc
         figurePattern = r"((\A|\n)\W*|\:|\.|>)(\W|[0-9])*(?=((Figure|Fig.) *[0-9]+(\.|\:)(.|\n){0,500}?\. *)(\n|\Z))"
@@ -411,7 +447,6 @@ class PDF_Processor:
         if re_result:
             for res in re_result:
                 figureDescription = res.groups()[3]
-                #print(figureDescription, "\n")
                 if not remove:
                     newText = "<FIGURE: " + figureDescription + ">"
                 else:
@@ -419,8 +454,10 @@ class PDF_Processor:
                 newPage = newPage.replace(figureDescription, newText)
         return newPage
 
-    #Find tables
     def findTables(self, doc, remove=True, correctWords=None):
+        """
+            Find and remove tables based on regular expressions and noise detection.
+        """
         initCorrWords = copy.copy(correctWords)
         if not correctWords:
             correctWords = self.correctWords
@@ -430,33 +467,33 @@ class PDF_Processor:
         re_result = re.finditer(tablePattern, newPage)
         if re_result:
             for res in re_result:
+                #print(res.groups())
                 tableDescription = res.groups()[0]
                 if res.groups()[3] == ".":
                     tableDescription += res.groups()[4]
+                if not newPage.count(tableDescription) > 0:
+                    continue
                 for line in newPage[newPage.index(tableDescription) + len(tableDescription):].splitlines():
                     if self._isNoise(line, correctWords=initCorrWords) or len(line) == 0:
                         tableDescription += line + "\n"
-                        #print(line)
                     else:
                         break
                 for line in reversed(newPage[:newPage.index(tableDescription)].splitlines()):
                     if self._isNoise(line, correctWords=initCorrWords) or len(line) == 0:
                         tableDescription = line + "\n" + tableDescription
-                        #print(line)
                     else:
                         break
-                #print("#", tableDescription)
-                #print(res.groups())
                 if not remove:
                     newText = "<TABLE: " + tableDescription + ">\n"
                 else:
                     newText = ""
                 newPage = newPage.replace(tableDescription, newText)
-        #newDoc.append(newPage)
         return newPage
 
-    #Find headers and footers
     def findHeadersAndFooters(self, doc, remove=True):
+        """
+            Find headers and footers as repetitive elements that occur at least three times.
+        """
         newDoc = doc
         noDigitDoc = ''.join([c for c in doc if not c.isdigit()])
         for line in doc.splitlines():
@@ -471,43 +508,46 @@ class PDF_Processor:
                 newDoc = newDoc.replace(lineToReplace, newLine)
         return newDoc
 
-    #Remove duplicates with variations such as page numbers
-    def findAdvDuplicates(self, doc, remove=True):
-        footers = self.getFooterShape(doc)
-        newDoc = []
-        for page in doc:
-            newPage = page
-            for line in page.splitlines():
-                nlpLine = self.nlp(line)
-                footerFound = False
-                for token in nlpLine:
-                    if token.shape_ in footers:
-                        footerFound = True
-                if footerFound:
-                    if not remove:
-                        newPage = newPage.replace(line, "<FOOTER: " + line + ">")
-                    else:
-                        newPage = newPage.replace(line, "")
-            newDoc.append(newPage)
-        return newDoc
-        #Helper function for finding footers
-    def getFooterShape(self, doc):
-        shapes = {}
-        footer = []
-        for page in doc:
-            tempShapes = {}
-            for line in page.splitlines():
-                nlpLine = self.nlp(line)
-                for token in nlpLine:
-                    tempShapes[token.shape_] = tempShapes.get(token.shape_, 0) + 1
-            for k, v in tempShapes.items():
-                shapes[k] = shapes.get(k, 0) + 1
-        for k, v in shapes.items():
-            if v >= len(doc) - 1 and k.find("d") > -1: #Footer occurs on (almost) every page and contains page numbers
-                footer += [k]
-        return footer
+    # #Remove duplicates with variations such as page numbers
+    # def findAdvDuplicates(self, doc, remove=True):
+    #     footers = self.getFooterShape(doc)
+    #     newDoc = []
+    #     for page in doc:
+    #         newPage = page
+    #         for line in page.splitlines():
+    #             nlpLine = self.nlp(line)
+    #             footerFound = False
+    #             for token in nlpLine:
+    #                 if token.shape_ in footers:
+    #                     footerFound = True
+    #             if footerFound:
+    #                 if not remove:
+    #                     newPage = newPage.replace(line, "<FOOTER: " + line + ">")
+    #                 else:
+    #                     newPage = newPage.replace(line, "")
+    #         newDoc.append(newPage)
+    #     return newDoc
+    #     #Helper function for finding footers
+    # def getFooterShape(self, doc):
+    #     shapes = {}
+    #     footer = []
+    #     for page in doc:
+    #         tempShapes = {}
+    #         for line in page.splitlines():
+    #             nlpLine = self.nlp(line)
+    #             for token in nlpLine:
+    #                 tempShapes[token.shape_] = tempShapes.get(token.shape_, 0) + 1
+    #         for k, v in tempShapes.items():
+    #             shapes[k] = shapes.get(k, 0) + 1
+    #     for k, v in shapes.items():
+    #         if v >= len(doc) - 1 and k.find("d") > -1: #Footer occurs on (almost) every page and contains page numbers
+    #             footer += [k]
+    #     return footer
 
     def findFormulas(self, text, remove=True, correctWords=None):
+        """
+            Find formulas as lines that contain mathematical functions, symbols or general noise
+        """
         initCorrWords = copy.copy(correctWords)
         if not correctWords:
             correctWords = self.correctWords
@@ -520,7 +560,6 @@ class PDF_Processor:
             if lidx < 0 or lidx >= len(newText.splitlines()):
                 print("Invalid lidx:", lidx)
                 break
-            #print(lidx, textlen)
             oldline = newText.splitlines()[lidx]
             if "<Formula:" in oldline:
                 lidx += 1
@@ -544,9 +583,6 @@ class PDF_Processor:
                 newLine = pointstr + "\n"
             else:
                 newLine = "<Formula: " + formula.rstrip("\n") + ">" + pointstr
-            #if not formula in newText:
-                        #print(formula)
-                        #print("----------------")
             newText = newText.replace(formula, newLine)
             for token in re.split(r'[ \n]', formula):
                 if not (re.match(r'[0-9\.,]+', token)):
@@ -557,6 +593,9 @@ class PDF_Processor:
         return (newText, symbols)
 
     def findNoise(self, doc, remove=True, correctWords=None):
+        """
+            Find noise using the _isNoise() helper function
+        """
         initCorrWords = copy.copy(correctWords)
         if not correctWords:
             correctWords = self.correctWords
@@ -568,7 +607,6 @@ class PDF_Processor:
             for match in re.findall(greekpatt, line):
                  line = line.replace(match, "")
             if(len(line) > 0 and self._isNoise(line, correctWords=initCorrWords)):
-                #print(lineToFind)
                 pointstr = ""
                 if line.rstrip().endswith("."):
                     pointstr = "."
@@ -580,12 +618,13 @@ class PDF_Processor:
         return newDoc
 
     def removeInlineReferences(self, doc):
+        """
+            Remove inline references and footnotes based on regular expressions
+        """
         newDoc = doc
         figTableRefPattern = r"( \([ \n]*(see )?(e\.g\. )?(c\.f\. )?(cf )?(for example)?(Fig|Figure|fig|figure|Table|Tbl|Section|Sec)(\.)* *[0-9, ]+[ \n]*\))"
         for res in re.findall(figTableRefPattern, newDoc):
-            #print(res)
             newDoc = newDoc.replace(res[0], "")
-        #refPattern = r" *\[[0-9,\-]+?\]"
         refPattern = r" *\[.*?\]"
         countPattern1 = 0
         for res in re.findall(refPattern, newDoc):
@@ -595,18 +634,18 @@ class PDF_Processor:
             return newDoc
         refPattern = r"([\.,:a-zA-Z]+)([∗\*0-9][0-9,]*)(.)"
         for res in re.finditer(refPattern, newDoc):
-            #print(res.groups()[1])
             if not re.search(r"\.[0-9]+\.", "".join(res.groups())):
-                #print("".join(res.groups()))
                 newDoc = newDoc.replace(res.groups()[0]+res.groups()[1]+res.groups()[2], res.groups()[0]+res.groups()[2])
 
         remaining_bracket_pattern = r"( \([ \n]*(see)? *(e\.g\.)?(c\.f\.)?(cf)?(for example)?[ \,\n]*\))"
         for res in re.findall(remaining_bracket_pattern, newDoc):
-            #print(res)
             newDoc = newDoc.replace(res[0], "")
         return newDoc
 
     def removeAuthors(self, doc, authors=None):
+        """
+            Remove lines that contain the names of the document's authors.
+        """
         if not authors:
             authors = self.authors
         if not authors:
@@ -617,8 +656,8 @@ class PDF_Processor:
                 continue
             for author in authors:
                 if author in line:
-                    #print(line)
                     newDoc = newDoc.replace(line, "\n")
+            # Possible extension: use named-entity recognition to also detect organisations and institutions:
             #self.nlp = spacy.load('en')
             # lineDoc = self.nlp(line)
             # ents = " ".join([entity.label_ for entity in lineDoc.ents]) #if entity.label_ in ["NORP", "ORG", "PERSON", "NORP"]
@@ -634,25 +673,28 @@ class PDF_Processor:
             #print("--------------")
         return newDoc
 
-    def removeLineBreaks(self, text):
-        paragraphs = self._groupParagraphs(text)
-        newText = ""
-        #remove line breaks
-        for paragraph in paragraphs:
-            for idx, line in enumerate(paragraph.splitlines()):
-                newLine = line.lstrip()
-                if newLine.endswith("-") and idx < len(paragraph.splitlines()) -1 :
-                    newLine = newLine.rstrip("-")
-                else:
-                    newLine = newLine.rstrip("\n")
-                    newLine += " "
-                #newLine = newLine.rstrip("\n")
-                newText += newLine
-            newText = newText.rstrip()
-            newText += "\n\n"
-        return newText
+    # def removeLineBreaks(self, text):
+    #     paragraphs = self._groupParagraphs(text)
+    #     newText = ""
+    #     #remove line breaks
+    #     for paragraph in paragraphs:
+    #         for idx, line in enumerate(paragraph.splitlines()):
+    #             newLine = line.lstrip()
+    #             if newLine.endswith("-") and idx < len(paragraph.splitlines()) -1 :
+    #                 newLine = newLine.rstrip("-")
+    #             else:
+    #                 newLine = newLine.rstrip("\n")
+    #                 newLine += " "
+    #             #newLine = newLine.rstrip("\n")
+    #             newText += newLine
+    #         newText = newText.rstrip()
+    #         newText += "\n\n"
+    #     return newText
 
     def removeSymbols(self, text, symbols):
+        """
+            Remove variables from the document.
+        """
         newText = text
         for oldsymbol in set(symbols):
             symbol = oldsymbol.lstrip().rstrip()
@@ -669,6 +711,10 @@ class PDF_Processor:
         return newText
 
     def removeAdditionalInfo(self, text, sections):
+        """
+            Remove additional information such as author contributions or
+            acknowledgments at the end of the document.
+        """
         newText = text
         for section in sections:
             sectionToFind = section + ": "
@@ -677,66 +723,69 @@ class PDF_Processor:
                 newText = newText[:newText.rindex(sectionToFind)]
         return newText
 
-    def matchParagraphs(self, text, out=False):
-        newText = text
-        paragraphs = self._groupParagraphs(newText)
-        maxLineNumber = len(paragraphs)
-        idx = len(paragraphs) - 1
-        #incompleteParagraphs = [paragraph for paragraph in  if not isWholeParagraph(paragraph)]
-        while idx  >= 0:
-            if idx >= len(paragraphs) or idx < 0:
-                break
-            paragraph = paragraphs[idx]
-            if(self._isWholeParagraph(paragraph)[0]):
-                if out:
-                    print("Already whole paragraph:", idx)
-                idx -= 1
-                continue
-            if(paragraph.lstrip()[0].islower()):
-                idx -= 1
-                continue
-            if idx < len(paragraphs) - 1:
-                nextidx = idx +1
-                oldparagraph = paragraph
-                newParagraph = paragraph
-                oldWrongSent = ""
-                while nextidx < len(paragraphs) and nextidx - idx <= maxLineNumber:
-                    nextParagraph = paragraphs[nextidx]
-                    endswithformula = False
-                    if len(nextParagraph) > 0 and (nextParagraph[0].isalpha() and nextParagraph[0].isupper()):
-                        idx -= 1
-                        endswithformula = True
-                    if out:
-                        print(idx, nextidx, len(paragraphs), nextParagraph[:10])
-                    if(self._isWholeParagraph(nextParagraph)[0] and not endswithformula):
-                        if out:
-                            print("---------- continue ----------")
-                        break
-                    if not endswithformula:
-                        newParagraph = self._mergeParagraphs(newParagraph, nextParagraph)
-                        oldparagraph = oldparagraph + "\n\n" + nextParagraph
-                        isWhole, wrongSent = self._isWholeParagraph(newParagraph, out=out)
-                    if endswithformula or isWhole:
-                        #print(nextParagraph)
-                        #print(newParagraph)
-                        newText = newText.replace(oldparagraph, newParagraph)
-                        paragraphs = self._groupParagraphs(newText)
-                        idx += 1
-                        if out:
-                            print("OK:", newParagraph)
-                        break
-
-                    else:
-                        if wrongSent == oldWrongSent:
-                            break
-                        else:
-                            #print("NO: ", newParagraph)
-                            nextidx += 1
-                            oldWrongSent = wrongSent
-                idx -= 1
-        return newText
+    # def matchParagraphs(self, text, out=False):
+    #     newText = text
+    #     paragraphs = self._groupParagraphs(newText)
+    #     maxLineNumber = len(paragraphs)
+    #     idx = len(paragraphs) - 1
+    #     #incompleteParagraphs = [paragraph for paragraph in  if not isWholeParagraph(paragraph)]
+    #     while idx  >= 0:
+    #         if idx >= len(paragraphs) or idx < 0:
+    #             break
+    #         paragraph = paragraphs[idx]
+    #         if(self._isWholeParagraph(paragraph)[0]):
+    #             if out:
+    #                 print("Already whole paragraph:", idx)
+    #             idx -= 1
+    #             continue
+    #         if(paragraph.lstrip()[0].islower()):
+    #             idx -= 1
+    #             continue
+    #         if idx < len(paragraphs) - 1:
+    #             nextidx = idx +1
+    #             oldparagraph = paragraph
+    #             newParagraph = paragraph
+    #             oldWrongSent = ""
+    #             while nextidx < len(paragraphs) and nextidx - idx <= maxLineNumber:
+    #                 nextParagraph = paragraphs[nextidx]
+    #                 endswithformula = False
+    #                 if len(nextParagraph) > 0 and (nextParagraph[0].isalpha() and nextParagraph[0].isupper()):
+    #                     idx -= 1
+    #                     endswithformula = True
+    #                 if out:
+    #                     print(idx, nextidx, len(paragraphs), nextParagraph[:10])
+    #                 if(self._isWholeParagraph(nextParagraph)[0] and not endswithformula):
+    #                     if out:
+    #                         print("---------- continue ----------")
+    #                     break
+    #                 if not endswithformula:
+    #                     newParagraph = self._mergeParagraphs(newParagraph, nextParagraph)
+    #                     oldparagraph = oldparagraph + "\n\n" + nextParagraph
+    #                     isWhole, wrongSent = self._isWholeParagraph(newParagraph, out=out)
+    #                 if endswithformula or isWhole:
+    #                     #print(nextParagraph)
+    #                     #print(newParagraph)
+    #                     newText = newText.replace(oldparagraph, newParagraph)
+    #                     paragraphs = self._groupParagraphs(newText)
+    #                     idx += 1
+    #                     if out:
+    #                         print("OK:", newParagraph)
+    #                     break
+    #
+    #                 else:
+    #                     if wrongSent == oldWrongSent:
+    #                         break
+    #                     else:
+    #                         #print("NO: ", newParagraph)
+    #                         nextidx += 1
+    #                         oldWrongSent = wrongSent
+    #             idx -= 1
+    #     return newText
 
     def findInlineFormula(self, text, remove=True, correctWords=None):
+        """
+            Find inline formulas based on regular expressions looking for mathematical operators
+        """
         initCorrWords = copy.copy(correctWords)
         if not correctWords:
             correctWords = self.correctWords
@@ -759,14 +808,13 @@ class PDF_Processor:
                     newText = newText.replace("{}".format(toRemove), "")
                 singleTerms.append(groups[1])
                 singleTerms.append(groups[-1])
-            #newText = newText.replace(match, "")
-        #print(inlineFormulas)
         return (newText, singleTerms)
 
     def groupChapters(self, text, headlines):
+        """
+            Group chapters by merging lines that belong to a corresponding headline.
+        """
         chapters = []
-        #if len(headlines) == 0:
-        #    return [text]
         for i in range(len(headlines)-1, -1, -1):
             fromLine = str(headlines[i][0])
             fromIdx = text.index(fromLine) + len(fromLine)
@@ -780,36 +828,35 @@ class PDF_Processor:
         return chapters
 
     def joinChapters(self, chapters):
+        """
+            Merge the chapters into one continuous text.
+        """
         newText = ""
         for ch in chapters:
             if len(ch.splitlines()) > 1:
                 newText += ch + "\n\n"
             else:
                 newText += ch
-        #"\n\n".join(self.chapters)
         return newText
 
     def removeDuplicateLines(self, text):
+        """
+            Remove duplicate lines after the cleaning process.
+        """
         newText = text
         found = 0
         duplicates = set([line for line in newText.splitlines() if newText.count(line) > 1 and len(line) > 0])
         for line in duplicates:
-            # pattern = r"([\w]{5}[^\n])" + re.escape(line) + r"([^\n]\w{5})"
-            # match = re.search(pattern, newText)
-            # if match:
-            #     #print(match.group())
-            #     if newText.find(match.group()):
-            #         found += 1
-            #     newText = newText.replace(match.group(), "".join(match.groups()))
             ridx = newText.rfind(line.lstrip().rstrip())
             if ridx > -1:
                 found += 1
                 newText = newText[:ridx] + newText[ridx + len(line):]
-        #print("Replaced {} duplicates".format(found))
         return newText
 
     def processWholePDF(self, inputfile, outputdir):
-        ## TODO:
+        """
+            Process a whole PDF document and write the output to a txt file.
+        """
         single_filename = inputfile.split("/")[-1]
         print(single_filename)
         subdir = inputfile.split("/")[-2] + "/"
@@ -822,37 +869,39 @@ class PDF_Processor:
         if outputdir:
             newFile = open(outputdir + subdir + single_filename.rstrip(".pdf")+".final.txt", "w+")
             newFile.write(tpp.text)
-        #else:
-            #print(tpp.text)
         print("Finished file", single_filename)
-        #print(tpp.text)
 
     def processFunc(self, filenames, outputdir=None):
+        """
+            Sequentially process multiple PDF files in one process.
+        """
         for filename in filenames:
             try:
                 self.processWholePDF(filename, outputdir)
             except Exception as e:
                 print("ERROR: ", e)
 
-    def startThreads(self, filenames, outputdir=None, numproc=multiprocessing.cpu_count()):
+    def startProcesses(self, filenames, outputdir=None, numproc=multiprocessing.cpu_count()):
+        """
+            Process multiple PDF files using multiprocessing.
+            The default value for the number of processes is the number of kernels in the system.
+        """
         pool = Pool()
         numprocesses = numproc
         print("STARTING TO PROCESS {} FILES IN {} PROCESSES".format(len(filenames), numprocesses))
         for idx in range(numprocesses):
             subrange = [filenames[i] for i in range(idx, len(filenames), numprocesses)]
             print("PROCESS #{}, total {} files.".format(idx, len(subrange)))
-            # fromidx = math.floor(idx * len(filenames)/numprocesses)
-            # toidx = math.floor((idx + 1)* len(filenames)/numprocesses)
             pool.apply_async(self.processFunc, args=(subrange, outputdir))
         pool.close()
         pool.join()
-                #t = threading.Thread(target=self.processWholePDF, args=(filename, outputdir))
-                #t.start()
-            #print("Error: unable to start thread")
 
 
 
 class Threaded_PDF_Processor:
+    """
+        Helper class used for multiprocessing that calls the functions of the PDF_Processor.
+    """
     def __init__(self, filename, pdfprocessor, method="pdfbox"):
         self.pdfprocessor = pdfprocessor
         self.correctWords = self.pdfprocessor._getCorrectWords()
@@ -873,7 +922,7 @@ class Threaded_PDF_Processor:
         #self._updateStatus()
         #self._updateStatus()
         self.text = self.pdfprocessor.findHeadersAndFooters(self.text)
-        #self.text = self.removeDuplicateLines(self.text)
+        #self.text = self.plicateLines(self.text)
         self.text = self.pdfprocessor.findFigures(self.text)
         #self._updateStatus()
         self.text = self.pdfprocessor.findTables(self.text, correctWords=self.correctWords)
@@ -909,4 +958,3 @@ class Threaded_PDF_Processor:
         self.text = self.pdfprocessor.removeAdditionalInfo(self.text, ["Acknowledgment", "Acknowledgement", "Acknowledgments", "Acknowledgements", "Author Contributions", "Conflicts of Interest"])
         #self._updateStatus()
         self.text = self.text.rstrip().lstrip()
-

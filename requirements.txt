@@ -1,0 +1,6 @@
+nltk==3.4
+PyPDF2==1.26.0
+python-pdfbox==0.1.5
+spacy==2.1.1
+textract==1.6.1
+

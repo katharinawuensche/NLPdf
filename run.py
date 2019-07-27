@@ -30,4 +30,4 @@ filenames = getListOfFiles(dirName=inputdir)
 
 pdfs = [filename for filename in filenames if filename.endswith(".pdf")]
 pp = PDF_Processor()
-pp.startThreads(pdfs, outputdir)
+pp.startProcesses(pdfs, outputdir)
